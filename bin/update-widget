@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+GEM_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WIDGET_DIR="$(cd "$GEM_ROOT/../widget" && pwd)"
+DEST="$GEM_ROOT/vendor/javascript/leadtodeed-widget.js"
+
+echo "Building widget..."
+cd "$WIDGET_DIR"
+npm run build
+
+echo "Copying dist/leadtodeed-widget.js -> $DEST"
+cp dist/leadtodeed-widget.js "$DEST"
+
+echo "Done. Vendored widget updated."
