@@ -246,9 +246,7 @@ class LeadtodeedCallController extends Controller {
   }
 
   _showIncoming(displayName) {
-    const callerInfo = this._callerInfo
     this._removePopup()
-    this._callerInfo = callerInfo
     const c = this._color
     const { wrapper, card } = buildCard(c)
 
@@ -335,9 +333,7 @@ class LeadtodeedCallController extends Controller {
   }
 
   _showConnected(number, { startSeconds = 0 } = {}) {
-    const callerInfo = this._callerInfo
     this._removePopup()
-    this._callerInfo = callerInfo
     const c = this._color
     const { wrapper, card } = buildCard(c)
 
@@ -379,6 +375,8 @@ class LeadtodeedCallController extends Controller {
 
   _onCallEnded() {
     this._callState = null
+    this._callerInfo = null
+    this._callerNumber = null
     this._channel?.postMessage({ type: "ended" })
     this._removePopup()
   }
@@ -467,8 +465,6 @@ class LeadtodeedCallController extends Controller {
 
   _removePopup() {
     this._stopTimer()
-    this._callerInfo = null
-    this._callerNumber = null
     if (this._popup) {
       this._popup.remove()
       this._popup = null
