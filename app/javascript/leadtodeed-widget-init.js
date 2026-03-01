@@ -191,7 +191,12 @@ class LeadtodeedCallController extends Controller {
     this._popup = null
     this._timer = null
     this._seconds = 0
+    this._callState = null
     this._color = document.querySelector('meta[name="leadtodeed-primary-color"]')?.content || "#8B5CF6"
+
+    this._channel = new BroadcastChannel("leadtodeed-call")
+    this._channel.onmessage = (e) => this._onBroadcast(e.data)
+    this._channel.postMessage({ type: "request-state" })
 
     this._handlers = {
       "leadtodeed:incoming-call": this._onIncoming.bind(this),
@@ -210,37 +215,67 @@ class LeadtodeedCallController extends Controller {
       window.removeEventListener(evt, fn)
     }
     this._removePopup()
+    if (this._channel) {
+      this._channel.close()
+      this._channel = null
+    }
   }
 
   // --- Incoming call ---
 
   _onIncoming(event) {
     const { callerName, callerNumber } = event.detail
-    this._showIncoming(callerName || callerNumber || "Unknown", callerNumber)
+    this._callerNumber = callerNumber
+    this._callerInfo = null
+    const displayName = callerName || callerNumber || "Unknown"
+
+    if (window.leadtodeedOnCall) {
+      window.leadtodeedOnCall(callerNumber, (info) => {
+        if (info?.link && info?.text) {
+          this._callerInfo = info
+        }
+        this._callState = { type: "incoming", displayName, callerNumber, callerInfo: this._callerInfo }
+        this._channel?.postMessage(this._callState)
+        this._showIncoming(displayName)
+      })
+    } else {
+      this._callState = { type: "incoming", displayName, callerNumber, callerInfo: this._callerInfo }
+      this._channel?.postMessage(this._callState)
+      this._showIncoming(displayName)
+    }
   }
 
   _showIncoming(displayName) {
+    const callerInfo = this._callerInfo
     this._removePopup()
+    this._callerInfo = callerInfo
     const c = this._color
     const { wrapper, card } = buildCard(c)
+
+    const topSection = buildTopSection(displayName, "is calling...", true)
+    card.append(topSection)
+
+    if (this._callerInfo) {
+      card.append(this._buildCallerInfoLink())
+    }
+
     const spacer = document.createElement("div")
     spacer.style.height = "24px"
 
     card.append(
-      buildTopSection(displayName, "is calling...", true),
       spacer,
       buildButtonsRow(
         buildButtonGroup({
           icon: PHONE_OFF_ICON, label: "Reject", bgColor: "white",
           borderColor: "#cbd5e1", iconColor: "#64748b", labelColor: "#64748b",
           borderRadius: "8px",
-          onClick: () => { window.leadtodeedPhone?.reject(); this._removePopup() },
+          onClick: () => { this._channel?.postMessage({ type: "reject" }); window.leadtodeedPhone?.reject(); this._removePopup() },
         }),
         buildButtonGroup({
           icon: PHONE_ICON, label: "Answer", bgColor: c,
           borderColor: c, iconColor: "white", labelColor: c,
           borderRadius: "50%",
-          onClick: () => { window.leadtodeedPhone?.answer(); this._removePopup() },
+          onClick: () => { this._channel?.postMessage({ type: "answer" }); window.leadtodeedPhone?.answer(); this._removePopup() },
         }),
       ),
     )
@@ -294,11 +329,15 @@ class LeadtodeedCallController extends Controller {
 
   _onCallConnected(event) {
     const { number } = event.detail
+    this._callState = { type: "connected", number, callerInfo: this._callerInfo, connectedAt: Date.now() }
+    this._channel?.postMessage(this._callState)
     this._showConnected(number)
   }
 
-  _showConnected(number) {
+  _showConnected(number, { startSeconds = 0 } = {}) {
+    const callerInfo = this._callerInfo
     this._removePopup()
+    this._callerInfo = callerInfo
     const c = this._color
     const { wrapper, card } = buildCard(c)
 
@@ -308,12 +347,17 @@ class LeadtodeedCallController extends Controller {
     })
     top.append(buildAvatar(), buildNameBlock(escapeHtml(number), "Connected", false))
 
+    card.append(top)
+
+    if (this._callerInfo) {
+      card.append(this._buildCallerInfoLink())
+    }
+
     const timer = buildTimerEl()
     const spacer = document.createElement("div")
     spacer.style.height = "8px"
 
     card.append(
-      top,
       timer,
       spacer,
       buildButtonsRow(
@@ -321,27 +365,31 @@ class LeadtodeedCallController extends Controller {
           icon: PHONE_OFF_ICON, label: "Hang up", bgColor: "white",
           borderColor: "#cbd5e1", iconColor: "#ef4444", labelColor: "#ef4444",
           borderRadius: "8px",
-          onClick: () => { window.leadtodeedPhone?.hangup() },
+          onClick: () => { this._channel?.postMessage({ type: "hangup" }); window.leadtodeedPhone?.hangup() },
         }),
       ),
     )
 
     document.body.appendChild(wrapper)
     this._popup = wrapper
-    this._startTimer()
+    this._startTimer(startSeconds)
   }
 
   // --- Ended ---
 
   _onCallEnded() {
+    this._callState = null
+    this._channel?.postMessage({ type: "ended" })
     this._removePopup()
   }
 
   // --- Timer ---
 
-  _startTimer() {
+  _startTimer(startSeconds = 0) {
     this._stopTimer()
-    this._seconds = 0
+    this._seconds = startSeconds
+    const el = this._popup?.querySelector('[data-role="timer"]')
+    if (el) el.textContent = formatTime(this._seconds)
     this._timer = setInterval(() => {
       this._seconds++
       const el = this._popup?.querySelector('[data-role="timer"]')
@@ -356,8 +404,71 @@ class LeadtodeedCallController extends Controller {
     }
   }
 
+  _onBroadcast(msg) {
+    switch (msg.type) {
+      case "request-state":
+        if (this._callState) {
+          this._channel?.postMessage(this._callState)
+        }
+        break
+      case "incoming":
+        if (!this._callState) {
+          this._callerNumber = msg.callerNumber
+          this._callerInfo = msg.callerInfo
+          this._showIncoming(msg.displayName)
+        }
+        break
+      case "connected":
+        if (!this._callState) {
+          this._callerInfo = msg.callerInfo
+          const startSeconds = Math.max(0, Math.floor((Date.now() - msg.connectedAt) / 1000))
+          this._showConnected(msg.number, { startSeconds })
+        }
+        break
+      case "ended":
+        if (!this._callState) {
+          this._removePopup()
+        }
+        break
+      case "answer":
+        if (this._callState) {
+          window.leadtodeedPhone?.answer()
+        }
+        break
+      case "reject":
+        if (this._callState) {
+          window.leadtodeedPhone?.reject()
+        }
+        break
+      case "hangup":
+        if (this._callState) {
+          window.leadtodeedPhone?.hangup()
+        }
+        break
+    }
+  }
+
+  _buildCallerInfoLink() {
+    const link = document.createElement("a")
+    link.dataset.role = "caller-info"
+    link.href = this._callerInfo.link
+    link.textContent = this._callerInfo.text
+    Object.assign(link.style, {
+      fontSize: "13px", fontWeight: "500", color: "#2563eb",
+      textDecoration: "none", textAlign: "center", width: "100%",
+      display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+    })
+    link.addEventListener("mouseenter", () => { link.style.textDecoration = "underline" })
+    link.addEventListener("mouseleave", () => { link.style.textDecoration = "none" })
+    link.target = "_blank"
+    link.rel = "noopener"
+    return link
+  }
+
   _removePopup() {
     this._stopTimer()
+    this._callerInfo = null
+    this._callerNumber = null
     if (this._popup) {
       this._popup.remove()
       this._popup = null
