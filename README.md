@@ -118,6 +118,63 @@ window.leadtodeedPhone.answer()
 window.leadtodeedPhone.reject()
 ```
 
+### Caller info link
+
+You can enrich the incoming-call popup with a clickable link (e.g. to a CRM record) by defining a `window.leadtodeedOnCall` callback. When an incoming call arrives, the widget calls it with the caller's phone number and a `done` callback. Call `done({ link, text })` to display a link in the popup, or `done(null)` to skip.
+
+```javascript
+window.leadtodeedOnCall = async (phone, done) => {
+  try {
+    const resp = await fetch(`/your/search/endpoint?phone=${encodeURIComponent(phone)}`, {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    })
+    if (!resp.ok) return done(null)
+    const data = await resp.json()
+    done({ link: data.link, text: data.display_name })
+  } catch (e) {
+    done(null)
+  }
+}
+```
+
+The search endpoint should accept a phone number and return JSON with at least a `link` (URL path) and whatever fields you need to build the `text` label. For example, in a Rails app:
+
+```ruby
+# config/routes.rb
+resources :clients, only: [] do
+  get :search, on: :collection
+end
+
+# app/controllers/clients_controller.rb
+def search
+  client = Client.find_by!(phone: params[:phone])
+  render json: { display_name: client.name, link: client_path(client) }
+end
+```
+
+Then override the default widget partial to include the callback:
+
+```slim
+= leadtodeed_widget_tag
+- if user_signed_in?
+  div data-controller="leadtodeed leadtodeed-call" style="display:contents"
+
+  javascript:
+    window.leadtodeedOnCall = async (phone, done) => {
+      try {
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content
+        const resp = await fetch(`/clients/search?phone=${encodeURIComponent(phone)}`, {
+          credentials: 'same-origin',
+          headers: { 'X-CSRF-Token': csrfToken, 'Accept': 'application/json' }
+        })
+        if (!resp.ok) return done(null)
+        const data = await resp.json()
+        done({ link: data.link, text: data.display_name })
+      } catch(e) { done(null) }
+    }
+```
+
 ### Events
 
 The widget dispatches custom DOM events:
