@@ -1,6 +1,6 @@
 # Leadtodeed Rails
 
-Rails engine providing WebRTC click-to-call phone widget integration via the [Leadtodeed](https://leadtodeed.com) backend.
+Rails engine providing WebRTC click-to-call phone widget integration via the [Leadtodeed](https://leadtodeed.ai) backend.
 
 Adds a drop-in widget to any Rails app that lets authenticated users make and receive phone calls directly from the browser. Incoming-call popups, click-to-call on `tel:` links, and JWT-based auth are included out of the box.
 
