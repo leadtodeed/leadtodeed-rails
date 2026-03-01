@@ -510,13 +510,14 @@ if (window.Stimulus) {
 // --- Initialize phone widget ---
 
 const leadtodeedUrl = document.querySelector('meta[name="leadtodeed-url"]')?.content
+const leadtodeedTokenUrl = document.querySelector('meta[name="leadtodeed-token-url"]')?.content
 if (leadtodeedUrl) {
   const dispatch = (name, detail) =>
     window.dispatchEvent(new CustomEvent(name, { detail }))
 
   const phone = new LeadtodeedPhone({
     leadtodeedUrl,
-    tokenUrl: "/api/leadtodeed/token",
+    tokenUrl: leadtodeedTokenUrl || "/api/leadtodeed/token",
     onIncomingCall: (d) => dispatch("leadtodeed:incoming-call", d),
     onCallStarted: (d) => dispatch("leadtodeed:call-started", d),
     onCallProgress: (d) => dispatch("leadtodeed:call-progress", d),
