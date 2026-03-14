@@ -25274,6 +25274,22 @@ class SipClient {
     }
   }
 
+  mute() {
+    if (this._currentSession) {
+      this._currentSession.mute({ audio: true });
+    }
+  }
+
+  unmute() {
+    if (this._currentSession) {
+      this._currentSession.unmute({ audio: true });
+    }
+  }
+
+  get isMuted() {
+    return this._currentSession ? this._currentSession.isMuted().audio : false
+  }
+
   _handleNewSession(e) {
     const session = e.session;
     this._currentSession = session;
@@ -25486,6 +25502,28 @@ class LeadtodeedPhone extends EventEmitter$b {
     this._sip.sendDTMF(digit);
   }
 
+  mute() {
+    this._sip.mute();
+    this.emit('muted', { muted: true });
+  }
+
+  unmute() {
+    this._sip.unmute();
+    this.emit('muted', { muted: false });
+  }
+
+  toggleMute() {
+    if (this._sip.isMuted) {
+      this.unmute();
+    } else {
+      this.mute();
+    }
+  }
+
+  get isMuted() {
+    return this._sip.isMuted
+  }
+
   addEvent(type, data) {
     const event = {
       id: Date.now() + Math.random(),
@@ -25602,6 +25640,7 @@ function createCallState() {
     number: null,
     direction: null,
     connectedAt: null,
+    muted: false,
     events: [],
   }
 }
@@ -25630,6 +25669,7 @@ function transitionPhase(state, newPhase, attrs = {}) {
     state.number = null;
     state.direction = null;
     state.connectedAt = null;
+    state.muted = false;
     state.events = [];
   }
   return true
@@ -25687,11 +25727,13 @@ function Leadtodeed({
       number: state.number,
       direction: state.direction,
       connectedAt: state.connectedAt,
+      muted: state.muted,
       events: state.events,
       accept: () => phone.answer(),
       decline: () => phone.reject(),
       hangup: () => phone.hangup(),
       sendDTMF: (digit) => phone.sendDTMF(digit),
+      toggleMute: () => phone.toggleMute(),
     });
   }
 
@@ -25734,6 +25776,11 @@ function Leadtodeed({
     }, 2000);
   });
 
+  phone.on('muted', ({ muted }) => {
+    state.muted = muted;
+    notify();
+  });
+
   phone.on('event', (event) => {
     state.events.push(event);
     notify();
@@ -25749,7 +25796,7 @@ function Leadtodeed({
         channel.postMessage({ type: 'state', phase: state.phase, number: state.number, direction: state.direction, connectedAt: state.connectedAt, events: state.events });
       }
     };
-  } catch (_) {
+  } catch {
     // BroadcastChannel not available (SSR, old browsers)
   }
 

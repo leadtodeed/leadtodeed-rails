@@ -10,7 +10,7 @@ echo "Building widget..."
 cd "$WIDGET_DIR"
 npm run build
 
-echo "Copying dist/leadtodeed-widget.js -> $DEST"
-cp dist/leadtodeed-widget.js "$DEST"
+echo "Copying dist/leadtodeed-widget.esm.js -> $DEST"
+cp dist/leadtodeed-widget.esm.js "$DEST"
 
 echo "Done. Vendored widget updated."
