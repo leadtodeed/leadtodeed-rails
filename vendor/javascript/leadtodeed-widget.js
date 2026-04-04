@@ -25294,8 +25294,18 @@ class SipClient {
     const session = e.session;
     this._currentSession = session;
 
+    // Read X-headers from incoming SIP INVITE for conference context
+    const request = session.request;
+    const bridgeId = request?.getHeader?.('X-Bridge-Id') || null;
+    const isConference = request?.getHeader?.('X-Conference') === 'true';
+    let participants = [];
+    try {
+      const raw = request?.getHeader?.('X-Participants');
+      if (raw) participants = JSON.parse(raw);
+    } catch { /* ignore parse errors */ }
+
     this._setupSessionEvents(session);
-    this._callbacks.onNewSession?.(session);
+    this._callbacks.onNewSession?.(session, { bridgeId, isConference, participants });
   }
 
   _setupSessionEvents(session) {
@@ -25414,6 +25424,8 @@ class LeadtodeedPhone extends EventEmitter$b {
     this._callNumber = null;
     this._callStartedAt = null;
     this._registered = false;
+    this._bridgeId = null;
+    this._isConference = false;
 
     // Wire up callbacks
     if (onRegistered) this.on('registered', onRegistered);
@@ -25436,7 +25448,7 @@ class LeadtodeedPhone extends EventEmitter$b {
         this._registered = false;
         this.emit('error', new Error(`SIP registration failed: ${e?.cause || 'unknown'}`));
       },
-      onNewSession: (session) => this._handleSession(session),
+      onNewSession: (session, meta) => this._handleSession(session, meta),
       onDisconnected: () => {
         this._registered = false;
       },
@@ -25449,6 +25461,14 @@ class LeadtodeedPhone extends EventEmitter$b {
 
   get isInCall() {
     return this._sip.currentSession !== null
+  }
+
+  get bridgeId() {
+    return this._bridgeId
+  }
+
+  get isConference() {
+    return this._isConference
   }
 
   get callDuration() {
@@ -25577,8 +25597,12 @@ class LeadtodeedPhone extends EventEmitter$b {
     return this
   }
 
-  _handleSession(session) {
+  _handleSession(session, meta = {}) {
     const direction = session.direction;
+
+    // Store conference metadata from SIP X-headers
+    if (meta.bridgeId) this._bridgeId = meta.bridgeId;
+    if (meta.isConference) this._isConference = meta.isConference;
 
     if (direction === 'incoming') {
       const remoteIdentity = session.remote_identity;
@@ -25586,7 +25610,12 @@ class LeadtodeedPhone extends EventEmitter$b {
       const callerNumber = remoteIdentity?.uri?.user || 'Unknown';
       this._callNumber = callerNumber;
 
-      this.emit('incomingCall', { callerName, callerNumber });
+      this.emit('incomingCall', {
+        callerName, callerNumber,
+        bridgeId: meta.bridgeId || null,
+        isConference: meta.isConference || false,
+        participants: meta.participants || [],
+      });
     }
 
     session.on('accepted', () => {
@@ -25599,12 +25628,14 @@ class LeadtodeedPhone extends EventEmitter$b {
 
     session.on('confirmed', () => {
       this._callStartedAt = Date.now();
-      this.emit('callConnected', { number: this._callNumber });
+      this.emit('callConnected', { number: this._callNumber, bridgeId: this._bridgeId });
     });
 
     const onEnd = (e) => {
       const duration = this.callDuration;
       this._callStartedAt = null;
+      this._bridgeId = null;
+      this._isConference = false;
       this.emit('callEnded', {
         number: this._callNumber,
         duration,
@@ -25642,6 +25673,9 @@ function createCallState() {
     connectedAt: null,
     muted: false,
     events: [],
+    participants: [],    // [{ user_id, name, extension }]
+    isConference: false,
+    bridgeId: null,
   }
 }
 
@@ -25671,8 +25705,66 @@ function transitionPhase(state, newPhase, attrs = {}) {
     state.connectedAt = null;
     state.muted = false;
     state.events = [];
+    state.participants = [];
+    state.isConference = false;
+    state.bridgeId = null;
   }
   return true
+}
+
+/**
+ * WebSocket client for real-time call participant events.
+ * Connects to the WebRTC backend's /api/call/events endpoint.
+ */
+
+class CallEventsSocket {
+  constructor({ url, token, onParticipantJoined, onParticipantLeft, onCallEnded }) {
+    this._url = url;
+    this._token = token;
+    this._ws = null;
+    this._callbacks = { onParticipantJoined, onParticipantLeft, onCallEnded };
+  }
+
+  connect() {
+    if (this._ws) return
+
+    const wsUrl = `${this._url}?token=${encodeURIComponent(this._token)}`;
+    this._ws = new WebSocket(wsUrl);
+
+    this._ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        switch (data.type) {
+          case 'participant_joined':
+            this._callbacks.onParticipantJoined?.(data);
+            break
+          case 'participant_left':
+            this._callbacks.onParticipantLeft?.(data);
+            break
+          case 'call_ended':
+            this._callbacks.onCallEnded?.(data);
+            break
+        }
+      } catch (e) {
+        console.error('[Leadtodeed] WS message parse error:', e);
+      }
+    };
+
+    this._ws.onerror = (e) => {
+      console.error('[Leadtodeed] WS error:', e);
+    };
+
+    this._ws.onclose = () => {
+      this._ws = null;
+    };
+  }
+
+  disconnect() {
+    if (this._ws) {
+      this._ws.close();
+      this._ws = null;
+    }
+  }
 }
 
 /**
@@ -25713,6 +25805,8 @@ function Leadtodeed({
   onIncomingCall = null,
 } = {}) {
   const state = createCallState();
+  const leadtodeedUrl = `https://${subdomain}.leadtodeed.ai`;
+  let callEventsSocket = null;
 
   const phone = new LeadtodeedPhone({
     subdomain,
@@ -25729,16 +25823,77 @@ function Leadtodeed({
       connectedAt: state.connectedAt,
       muted: state.muted,
       events: state.events,
+      participants: state.participants,
+      isConference: state.isConference,
       accept: () => phone.answer(),
       decline: () => phone.reject(),
       hangup: () => phone.hangup(),
       sendDTMF: (digit) => phone.sendDTMF(digit),
       toggleMute: () => phone.toggleMute(),
+      addParticipant: (userId) => _addParticipant(userId),
     });
   }
 
-  phone.on('incomingCall', async ({ callerNumber }) => {
+  async function _addParticipant(userId) {
+    const token = phone._auth?.token;
+    if (!token) return
+    try {
+      const resp = await fetch(`${leadtodeedUrl}/api/conference/add`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ target_user_id: userId }),
+      });
+      if (!resp.ok) {
+        console.error('[Leadtodeed] addParticipant failed:', resp.status);
+      }
+    } catch (e) {
+      console.error('[Leadtodeed] addParticipant error:', e);
+    }
+  }
+
+  function _connectCallEventsWS() {
+    const token = phone._auth?.token;
+    if (!token) return
+    const wsUrl = leadtodeedUrl.replace('https://', 'wss://') + '/api/call/events';
+    callEventsSocket = new CallEventsSocket({
+      url: wsUrl,
+      token,
+      onParticipantJoined: (data) => {
+        state.participants = [...state.participants.filter(p => p.user_id !== data.user_id), {
+          user_id: data.user_id,
+          name: data.name,
+          extension: data.extension,
+        }];
+        state.isConference = state.participants.length > 1;
+        notify();
+      },
+      onParticipantLeft: (data) => {
+        state.participants = state.participants.filter(p => p.user_id !== data.user_id);
+        notify();
+      },
+      onCallEnded: () => {
+        // The bridge ended server-side; let the normal SIP callEnded handle phase transition
+      },
+    });
+    callEventsSocket.connect();
+  }
+
+  function _disconnectCallEventsWS() {
+    if (callEventsSocket) {
+      callEventsSocket.disconnect();
+      callEventsSocket = null;
+    }
+  }
+
+  phone.on('incomingCall', async ({ callerNumber, participants: initialParticipants }) => {
     transitionPhase(state, 'ringing', { number: callerNumber, direction: 'incoming' });
+    if (initialParticipants?.length) {
+      state.participants = initialParticipants;
+      state.isConference = true;
+    }
     notify();
 
     if (onIncomingCall) {
@@ -25761,12 +25916,16 @@ function Leadtodeed({
     }
   });
 
-  phone.on('callConnected', () => {
+  phone.on('callConnected', ({ bridgeId }) => {
     transitionPhase(state, 'connected', { connectedAt: Date.now() });
+    if (bridgeId) state.bridgeId = bridgeId;
     notify();
+    // Start WebSocket for real-time participant events
+    _connectCallEventsWS();
   });
 
   phone.on('callEnded', () => {
+    _disconnectCallEventsWS();
     transitionPhase(state, 'ended');
     notify();
 
