@@ -26,7 +26,7 @@ Gem::Specification.new do |spec|
   spec.metadata["rubygems_mfa_required"] = "true"
 
   spec.add_dependency "importmap-rails"
-  spec.add_dependency "jwt", "~> 2.5"
+  spec.add_dependency "jwt", ">= 2.5"
   spec.add_dependency "rails", ">= 7.0"
   spec.add_dependency "slim-rails"
 end

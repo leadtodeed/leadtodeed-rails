@@ -3,7 +3,7 @@ PATH
   specs:
     leadtodeed-rails (0.1.0)
       importmap-rails
-      jwt (~> 2.5)
+      jwt (>= 2.5)
       rails (>= 7.0)
       slim-rails
 
