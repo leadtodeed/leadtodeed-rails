@@ -25796,6 +25796,7 @@ class CallEventsSocket {
  * @param {string} config.tokenUrl - Token endpoint path
  * @param {Function} [config.renderer] - (state) => void — called on every state change
  * @param {Function} [config.onIncomingCall] - async (callerNumber) => enrichmentData | null
+ * @param {string} [config.ringtoneUrl] - URL to an .ogg ringtone played on incoming calls
  * @returns {LeadtodeedPhone} The phone instance
  */
 function Leadtodeed({
@@ -25803,10 +25804,17 @@ function Leadtodeed({
   tokenUrl,
   renderer = null,
   onIncomingCall = null,
+  ringtoneUrl = null,
 } = {}) {
   const state = createCallState();
   const leadtodeedUrl = `https://${subdomain}.leadtodeed.ai`;
   let callEventsSocket = null;
+  let ringtoneAudio = null;
+
+  if (ringtoneUrl) {
+    ringtoneAudio = new Audio(ringtoneUrl);
+    ringtoneAudio.loop = true;
+  }
 
   const phone = new LeadtodeedPhone({
     subdomain,
@@ -25881,10 +25889,10 @@ function Leadtodeed({
     callEventsSocket.connect();
   }
 
-  function _disconnectCallEventsWS() {
-    if (callEventsSocket) {
-      callEventsSocket.disconnect();
-      callEventsSocket = null;
+  function _stopRingtone() {
+    if (ringtoneAudio) {
+      ringtoneAudio.pause();
+      ringtoneAudio.currentTime = 0;
     }
   }
 
@@ -25893,6 +25901,9 @@ function Leadtodeed({
     if (initialParticipants?.length) {
       state.participants = initialParticipants;
       state.isConference = true;
+    }
+    if (ringtoneAudio) {
+      ringtoneAudio.play().catch(() => {});
     }
     notify();
 
@@ -25916,16 +25927,20 @@ function Leadtodeed({
     }
   });
 
-  phone.on('callConnected', ({ bridgeId }) => {
-    transitionPhase(state, 'connected', { connectedAt: Date.now() });
-    if (bridgeId) state.bridgeId = bridgeId;
-    notify();
-    // Start WebSocket for real-time participant events
+  phone.on('registered', () => {
+    // Connect participant events WS on SIP registration so both WS are always up
     _connectCallEventsWS();
   });
 
+  phone.on('callConnected', ({ bridgeId }) => {
+    _stopRingtone();
+    transitionPhase(state, 'connected', { connectedAt: Date.now() });
+    if (bridgeId) state.bridgeId = bridgeId;
+    notify();
+  });
+
   phone.on('callEnded', () => {
-    _disconnectCallEventsWS();
+    _stopRingtone();
     transitionPhase(state, 'ended');
     notify();
 
