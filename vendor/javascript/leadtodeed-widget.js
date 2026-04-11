@@ -25797,6 +25797,7 @@ class CallEventsSocket {
  * @param {Function} [config.renderer] - (state) => void — called on every state change
  * @param {Function} [config.onIncomingCall] - async (callerNumber) => enrichmentData | null
  * @param {string} [config.ringtoneUrl] - URL to an .ogg ringtone played on incoming calls
+ * @param {{play: Function, stop: Function}} [config.ringtonePlayer] - Custom ringtone player (overrides ringtoneUrl). Use to play via AudioContext so macOS doesn't show Now Playing.
  * @returns {LeadtodeedPhone} The phone instance
  */
 function Leadtodeed({
@@ -25805,13 +25806,17 @@ function Leadtodeed({
   renderer = null,
   onIncomingCall = null,
   ringtoneUrl = null,
+  ringtonePlayer = null,
 } = {}) {
   const state = createCallState();
   const leadtodeedUrl = `https://${subdomain}.leadtodeed.ai`;
   let callEventsSocket = null;
   let ringtoneAudio = null;
 
-  if (ringtoneUrl) {
+  if (ringtonePlayer) {
+    // Custom player provided — delegate play/stop to it
+    ringtoneAudio = { play: () => ringtonePlayer.play(), pause: () => ringtonePlayer.stop(), currentTime: 0 };
+  } else if (ringtoneUrl) {
     ringtoneAudio = new Audio(ringtoneUrl);
     ringtoneAudio.loop = true;
   }
