@@ -25755,7 +25755,7 @@ class CallEventsSocket {
     this._closedByUser = true;
     this._clearTimers();
     if (this._ws) {
-      try { this._ws.close(); } catch (_) { /* ignore */ }
+      try { this._ws.close(); } catch { /* ignore */ }
       this._ws = null;
     }
   }
@@ -25810,7 +25810,7 @@ class CallEventsSocket {
     this._clearHeartbeat();
     this._heartbeatTimer = setInterval(() => {
       if (this._ws && this._ws.readyState === WebSocket.OPEN) {
-        try { this._ws.send(JSON.stringify({ type: 'ping' })); } catch (_) { /* will be caught by onclose */ }
+        try { this._ws.send(JSON.stringify({ type: 'ping' })); } catch { /* will be caught by onclose */ }
       }
     }, HEARTBEAT_INTERVAL);
   }
@@ -25826,7 +25826,7 @@ class CallEventsSocket {
   _forceReconnect() {
     // Close whatever we have; onclose handler will schedule a reconnect.
     if (this._ws) {
-      try { this._ws.close(); } catch (_) { /* ignore */ }
+      try { this._ws.close(); } catch { /* ignore */ }
     }
   }
 
