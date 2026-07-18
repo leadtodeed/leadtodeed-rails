@@ -13,11 +13,11 @@ RSpec.describe "Leadtodeed::Tokens" do
   before { host! ENV.fetch("APP_HOST", "127.0.0.1:5000") }
 
   describe "POST /api/leadtodeed/token" do
-    context "when not signed in" do
-      it "redirects to sign in" do
+    context "when no principal is resolved" do
+      it "returns unauthorized" do
         post "/api/leadtodeed/token", headers: { "HOST" => "127.0.0.1" }
 
-        expect(response).to redirect_to(new_user_session_url)
+        expect(response).to have_http_status(:unauthorized)
       end
     end
 
@@ -31,7 +31,7 @@ RSpec.describe "Leadtodeed::Tokens" do
         ENV.delete("LEADTODEED_JWT_SECRET")
       end
 
-      it "returns a JWT token with user_id" do
+      it "mints a JWT from the user's #leadtodeed_attributes" do
         post "/api/leadtodeed/token", headers: { "HOST" => "127.0.0.1" }
 
         expect(response).to have_http_status(:ok)
@@ -40,9 +40,9 @@ RSpec.describe "Leadtodeed::Tokens" do
         expect(json).to have_key("token")
 
         decoded = JWT.decode(json["token"], "test-secret", true, algorithm: "HS256").first
-        expect(decoded["sub"]).to eq(user.email)
-        expect(decoded["user_id"]).to eq(user.id)
-        expect(decoded["name"]).to eq(user.name)
+        expect(decoded["sub"]).to eq(user.id.to_s)
+        expect(decoded["name"]).to eq(user.display_name)
+        expect(decoded["aud"]).to eq(Rails.application.config.leadtodeed_jwt_aud)
         expect(decoded["exp"]).to be_present
         expect(decoded["iat"]).to be_present
       end
